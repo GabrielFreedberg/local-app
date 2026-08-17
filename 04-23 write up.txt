@@ -1,0 +1,90 @@
+Today’s Progress
+
+We turned the prototype from a loose test harness into a more structured product flow with separate experiences for users and companies.
+
+What we built
+
+- Added real account creation and login using `email + password`.
+- Split account creation into two distinct flows:
+  - `User Account`
+  - `Company Account`
+- Added role-based access after login:
+  - Users can search deals and manage favorites.
+  - Companies can only add deals.
+- Made new accounts log in immediately after signup, so there’s no extra login step right after account creation.
+
+User experience updates
+
+- Reworked the UI into cleaner tabbed pages.
+- Removed the old `Confirm Phone` flow from the interface.
+- Ensured users land on the correct page after login:
+  - Users land on `Search`
+  - Companies land on `Company Deal Blast`
+- Made the company deal form auto-fill the company name and zip code from the company account profile, while leaving the deal description blank.
+- Added a dedicated favorites workflow where users can save the deal categories/items they care about.
+
+Favorites / alert preferences
+
+- Chose `Alert Interests` as the field name for saved user interests.
+- Users can add favorites like `rice`, `beer`, `chicken`, etc.
+- Favorites now append instead of replacing the full list.
+- Built a collapsible dropdown called `All Favorites`.
+- Added a red heart next to each saved favorite.
+- Clicking the heart removes that item from the saved list.
+- Fixed the favorites form so it clears after submit, including when pressing Enter.
+- Fixed the bug where saving favorites kicked the user to another tab.
+
+Search and deal matching
+
+- Replaced the old store/preferences setup UI with a search-driven experience.
+- Added readable deal search output instead of raw JSON.
+- Improved formatting of matching deal responses with spacing between results.
+- Included company-submitted deals in the searchable deal feed.
+- Added a human-readable company result format:
+  - `Company Name has Deal at area ZIP`
+- Added a dedicated `Grocery Search` page earlier, then evolved the product into the current user/company split.
+
+Alert logic
+
+- Changed notifications so users only get alerts when:
+  - the deal matches the user’s zip code
+  - and the deal matches one of that user’s `Alert Interests`
+- Left all other deals visible in search, even if they do not trigger alerts.
+- Ensured company deals follow the same matching rule before alerting users.
+
+Email / notification work
+
+- Added SMTP-based email sending support.
+- Added fallback mocked email behavior when SMTP is not configured.
+- Improved error handling so failed sends return readable API errors instead of generic load failures.
+- Included the user’s phone number in email content.
+- Added an `Email Outbox` view so mocked email behavior is visible during testing.
+
+Data / backend updates
+
+- Extended the SQLite user model to support:
+  - password
+  - account type
+  - company name
+- Added lightweight database migration handling for new columns.
+- Added commands/workflows for wiping the DB and reading entries.
+- Packaged the project into a standalone folder for opening in VS Code.
+
+Bugs fixed today
+
+- Fixed the company account signup crash caused by `event.currentTarget.reset`.
+- Fixed the blank post-login state caused by landing on an invalid tab.
+- Fixed the favorites tab redirect behavior after saving.
+- Fixed hidden email-send failures by surfacing proper request errors.
+
+Current state
+
+The app now supports:
+
+- separate user/company account creation
+- login with role-based views
+- company deal submission
+- searchable deals
+- user favorites management
+- zip + interest-based alert matching
+- SMTP-ready email delivery flow

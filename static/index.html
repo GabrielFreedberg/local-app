@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local Deal Alert</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260816a" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="site-header">
+        <div class="site-header-brand">
+          <span class="site-header-mark" aria-hidden="true">LD</span>
+          Local Deal Alert
+        </div>
+        <span class="site-header-tagline">Denver pilot &middot; zip-based deal alerts</span>
+      </header>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Built for shoppers and local businesses</p>
+          <h1>Deals worth a second look, only when they match you.</h1>
+          <p class="lede">
+            Save the products and categories you actually care about. We'll only alert
+            you when a nearby deal matches your zip code and your favorites &mdash;
+            everything else stays quietly searchable.
+          </p>
+          <div class="hero-pills">
+            <span class="pill">Zip-based alerts</span>
+            <span class="pill">Favorites-driven matching</span>
+            <span class="pill">Separate user and company flows</span>
+          </div>
+        </div>
+        <div class="hero-panel">
+          <p class="panel-label">Live System Status</p>
+          <div id="systemStatusBanner" class="system-status-banner">
+            <span id="systemStatusBadge" class="system-status-badge">Checking email mode...</span>
+            <p id="systemStatusNote" class="system-status-note">Loading system status.</p>
+            <p id="systemSchedulerNote" class="system-status-subnote">Loading matching scheduler.</p>
+          </div>
+          <div class="actions">
+            <button id="matchBtn" type="button">Run Matching</button>
+          </div>
+          <p id="heroActionResult" class="result result-compact" aria-live="polite"></p>
+          <p id="runtimeModeNote" class="panel-note hidden">Open the live app at http://127.0.0.1:8000/ for working data and authentication.</p>
+          <p class="panel-note">This control simulates the matching job we’ll later automate in production.</p>
+        </div>
+      </section>
+
+      <section id="authShell" class="auth-shell">
+        <div class="card auth-card auth-card-main">
+          <div class="auth-panel" data-auth-view="login">
+            <form id="loginForm">
+              <p class="section-kicker">Welcome Back</p>
+              <h2>Login</h2>
+              <p class="section-copy">Sign in to continue as a shopper or local business.</p>
+              <p id="loginModeCopy" class="auth-inline-note">Use the same email and password you created for your shopper or business account.</p>
+              <label>Email <input name="email" type="email" required /></label>
+              <label>Password
+                <div class="password-field">
+                  <input name="password" type="password" required />
+                  <button class="password-toggle" type="button" data-toggle-password>Password</button>
+                </div>
+              </label>
+              <button type="submit">Log In</button>
+              <div class="auth-trust-row">
+                <span>Separate shopper and business accounts</span>
+                <span>Zip-based matching</span>
+                <span>Favorites-first alerts</span>
+              </div>
+              <div class="auth-links">
+                <button class="text-link" type="button" data-auth-target="resetRequest">Forgot password?</button>
+                <button class="text-link" type="button" data-auth-target="userSignup">Customer sign up</button>
+                <button class="text-link" type="button" data-auth-target="companySignup">Business sign up</button>
+              </div>
+              <button id="resendVerificationBtn" class="secondary-button small-button hidden" type="button">Resend Verification Email</button>
+              <p id="loginResult" class="result"></p>
+            </form>
+          </div>
+
+          <div class="auth-panel hidden" data-auth-view="userSignup">
+            <form id="userSignupForm">
+              <p class="section-kicker">Shopper Flow</p>
+              <h2>Create User Account</h2>
+              <p class="section-copy">Search all deals, save favorites, and only receive alerts that actually match.</p>
+              <label>Phone Number <input name="phoneNumber" required /></label>
+              <label>Email <input name="email" type="email" required /></label>
+              <label>Password
+                <div class="password-field">
+                  <input name="password" type="password" required />
+                  <button class="password-toggle" type="button" data-toggle-password>Password</button>
+                </div>
+              </label>
+              <label>Confirm Password
+                <div class="password-field">
+                  <input name="confirmPassword" type="password" required />
+                  <button class="password-toggle" type="button" data-toggle-password>Password</button>
+                </div>
+              </label>
+              <p class="password-hint">Use at least 8 characters with at least one letter and one number.</p>
+              <label>Zip Code <input name="zipCode" value="80205" required /></label>
+              <button type="submit">Create User Account</button>
+              <div class="auth-links">
+                <button class="text-link" type="button" data-auth-target="login">Back to login</button>
+                <button class="text-link" type="button" data-auth-target="companySignup">Business sign up</button>
+              </div>
+              <p id="userSignupResult" class="result"></p>
+            </form>
+          </div>
+
+          <div class="auth-panel hidden" data-auth-view="companySignup">
+            <form id="companySignupForm">
+              <p class="section-kicker">Business Flow</p>
+              <h2>Create Company Account</h2>
+              <p class="section-copy">Post local deals to nearby shoppers who have matching interests in your area.</p>
+              <label>Company Name <input name="companyName" required /></label>
+              <label>Phone Number <input name="phoneNumber" required /></label>
+              <label>Email <input name="email" type="email" required /></label>
+              <label>Password
+                <div class="password-field">
+                  <input name="password" type="password" required />
+                  <button class="password-toggle" type="button" data-toggle-password>Password</button>
+                </div>
+              </label>
+              <label>Confirm Password
+                <div class="password-field">
+                  <input name="confirmPassword" type="password" required />
+                  <button class="password-toggle" type="button" data-toggle-password>Password</button>
+                </div>
+              </label>
+              <p class="password-hint">Use at least 8 characters with at least one letter and one number.</p>
+              <label>Zip Code <input name="zipCode" value="80205" required /></label>
+              <button type="submit">Create Company Account</button>
+              <div class="auth-links">
+                <button class="text-link" type="button" data-auth-target="login">Back to login</button>
+                <button class="text-link" type="button" data-auth-target="userSignup">Customer sign up</button>
+              </div>
+              <p id="companySignupResult" class="result"></p>
+            </form>
+          </div>
+
+          <div class="auth-panel hidden" data-auth-view="resetRequest">
+            <form id="passwordResetRequestForm">
+              <p class="section-kicker">Account Recovery</p>
+              <h2>Reset Password</h2>
+              <p id="resetRequestCopy" class="section-copy">Enter your email and we’ll send reset instructions. In prototype mode, a manual token will be shown here if email is not configured.</p>
+              <label>Email <input name="email" type="email" required /></label>
+              <button type="submit">Send Reset Instructions</button>
+              <div class="auth-links">
+                <button id="manualResetTokenLink" class="text-link" type="button" data-auth-target="resetConfirm">Have a reset token?</button>
+                <button class="text-link" type="button" data-auth-target="login">Back to login</button>
+              </div>
+              <p id="passwordResetRequestResult" class="result"></p>
+            </form>
+          </div>
+
+          <div class="auth-panel hidden" data-auth-view="resetConfirm">
+            <form id="passwordResetConfirmForm">
+              <p class="section-kicker">New Password</p>
+              <h2>Complete Reset</h2>
+              <p id="resetConfirmCopy" class="section-copy">Paste your reset token, choose a new password, and you’ll be signed in automatically.</p>
+              <label id="resetTokenField">Reset Token <input id="passwordResetTokenInput" name="token" required /></label>
+              <label>New Password
+                <div class="password-field">
+                  <input name="newPassword" type="password" required />
+                  <button class="password-toggle" type="button" data-toggle-password>Password</button>
+                </div>
+              </label>
+              <label>Confirm Password
+                <div class="password-field">
+                  <input name="confirmPassword" type="password" required />
+                  <button class="password-toggle" type="button" data-toggle-password>Password</button>
+                </div>
+              </label>
+              <p class="password-hint">Use at least 8 characters with at least one letter and one number.</p>
+              <button type="submit">Update Password</button>
+              <div class="auth-links">
+                <button class="text-link" type="button" data-auth-target="resetRequest">Request another token</button>
+                <button class="text-link" type="button" data-auth-target="login">Back to login</button>
+              </div>
+              <p id="passwordResetConfirmResult" class="result"></p>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section id="appShell" class="hidden">
+        <div class="app-shell-top">
+          <div class="session card">
+            <div class="session-copy">
+              <p class="section-kicker">Current Session</p>
+              <strong id="sessionEmail">-</strong>
+              <span id="sessionMeta" class="session-meta"></span>
+            </div>
+            <button id="logoutBtn" class="secondary-button" type="button">Log Out</button>
+          </div>
+
+          <details class="card security-card security-card-collapsed">
+            <summary>
+              <div class="security-summary-copy">
+                <p class="section-kicker">Security</p>
+                <strong>Password & Account Access</strong>
+                <span id="securityCopy" class="section-copy">Keep your account secure by updating your password any time. Changing it will revoke your older sessions.</span>
+              </div>
+              <span class="security-summary-action">Open</span>
+            </summary>
+            <form id="changePasswordForm" class="security-form">
+              <label>Current Password
+                <div class="password-field">
+                  <input name="currentPassword" type="password" required />
+                  <button class="password-toggle" type="button" data-toggle-password>Password</button>
+                </div>
+              </label>
+              <label>New Password
+                <div class="password-field">
+                  <input name="newPassword" type="password" required />
+                  <button class="password-toggle" type="button" data-toggle-password>Password</button>
+                </div>
+              </label>
+              <label>Confirm New Password
+                <div class="password-field">
+                  <input name="confirmPassword" type="password" required />
+                  <button class="password-toggle" type="button" data-toggle-password>Password</button>
+                </div>
+              </label>
+              <p class="password-hint">Use at least 8 characters with at least one letter and one number.</p>
+              <button type="submit">Change Password</button>
+              <p id="changePasswordResult" class="result"></p>
+            </form>
+          </details>
+        </div>
+
+        <section class="overview-grid">
+          <article class="card overview-card">
+            <p class="section-kicker">Snapshot</p>
+            <h2 id="overviewPrimaryLabel">Your Account</h2>
+            <strong id="overviewPrimaryValue" class="overview-value">-</strong>
+            <p id="overviewPrimaryNote" class="section-copy">-</p>
+          </article>
+          <article class="card overview-card">
+            <p class="section-kicker">Activity</p>
+            <h2 id="overviewSecondaryLabel">Live Activity</h2>
+            <strong id="overviewSecondaryValue" class="overview-value">-</strong>
+            <p id="overviewSecondaryNote" class="section-copy">-</p>
+          </article>
+          <article class="card overview-card">
+            <p class="section-kicker">Coverage</p>
+            <h2 id="overviewTertiaryLabel">Coverage</h2>
+            <strong id="overviewTertiaryValue" class="overview-value">-</strong>
+            <p id="overviewTertiaryNote" class="section-copy">-</p>
+          </article>
+        </section>
+
+        <nav class="tabs" aria-label="App sections">
+          <button class="tab role-company" data-tab="companyPage" type="button">Company Deals</button>
+          <button class="tab role-user" data-tab="searchPage" type="button">Search</button>
+          <button class="tab role-user" data-tab="favoritesPage" type="button">Favorites</button>
+        </nav>
+
+        <section class="card workspace-card">
+          <div class="workspace-copy">
+            <p id="workspaceKicker" class="section-kicker">Workspace</p>
+            <h2 id="workspaceTitle">Welcome back</h2>
+            <p id="workspaceCopy" class="section-copy">Your dashboard is ready.</p>
+          </div>
+          <div id="workspaceChips" class="workspace-chips"></div>
+        </section>
+
+        <section id="companyPage" class="tab-page hidden">
+          <div class="company-layout">
+            <form id="companyDealForm" class="card wide-card feature-card">
+              <p class="section-kicker">Merchant Console</p>
+              <h2>Company Deal Blast</h2>
+              <p class="section-copy">Create a local offer, choose how long it should run, and keep your nearby shoppers looking at fresh deals.</p>
+              <div class="merchant-form-note">
+                <strong>What shoppers should notice first</strong>
+                <span>Lead with the offer itself, keep the address precise, and let the expiration date create urgency.</span>
+              </div>
+              <div class="merchant-onboarding">
+                <strong>Merchant setup</strong>
+                <ul class="merchant-onboarding-list">
+                  <li>Use your real location so the right shoppers can find you.</li>
+                  <li>Set an expiration date so old offers do not keep circulating.</li>
+                  <li>Keep the deal line short and specific so it feels worth opening.</li>
+                </ul>
+              </div>
+              <label>Company Name <input id="companyNameInput" name="companyName" required /></label>
+              <label>Zip Code <input id="companyZipInput" name="zipCode" required /></label>
+              <label>Street Address <input name="address" placeholder="123 Main St, Denver, CO 80205" required /></label>
+              <div class="company-form-grid">
+                <label>Status
+                  <select name="status">
+                    <option value="active">Active now</option>
+                    <option value="draft">Save as draft</option>
+                  </select>
+                </label>
+                <label>Expires On <input id="companyExpiresInput" name="expiresOn" type="date" /></label>
+              </div>
+              <p id="companyDateHint" class="company-field-hint">Deals without an expiration date are harder to keep fresh.</p>
+              <label>Deal Description <textarea id="companyDealDescriptionInput" name="dealDescription" rows="5" required></textarea></label>
+              <div class="company-form-meta">
+                <span id="companyStatusHint" class="company-field-hint">Active deals appear in search immediately.</span>
+                <span id="companyDescriptionCount" class="company-field-hint">0 characters</span>
+              </div>
+              <section class="merchant-preview-card" aria-label="Live deal preview">
+                <p class="section-kicker">Live Preview</p>
+                <strong id="companyPreviewTitle">Your business name</strong>
+                <p id="companyPreviewDeal" class="merchant-preview-deal">Your deal summary will appear here as you type.</p>
+                <div class="merchant-preview-meta">
+                  <span id="companyPreviewAddress">Address preview</span>
+                  <span id="companyPreviewExpiration">Expiration preview</span>
+                </div>
+              </section>
+              <input id="editingDealId" name="editingDealId" type="hidden" />
+              <div class="company-actions">
+                <button id="companySubmitBtn" type="submit">Post Deal</button>
+                <button id="companyCancelBtn" class="secondary-button hidden" type="button">Cancel Edit</button>
+              </div>
+              <p id="companyDealResult" class="result"></p>
+            </form>
+
+            <section class="card merchant-feed-card">
+              <p class="section-kicker">Live Merchant Feed</p>
+              <h2>Deal Lifecycle</h2>
+              <p class="section-copy">See what is active now, what is saved as a draft, and what has already expired.</p>
+              <p id="merchantFeedSummary" class="merchant-feed-summary">Track active, draft, and expired offers in one place.</p>
+              <div id="merchantFeedMetrics" class="merchant-feed-metrics"></div>
+              <section id="merchantHealthBoard" class="merchant-health-board" aria-label="Merchant health"></section>
+              <section id="merchantInsightDeck" class="merchant-insight-deck" aria-label="Merchant insights"></section>
+              <div id="companyDealsView" class="merchant-feed-list">
+                <div class="search-empty-state">Post your first deal to build your company feed.</div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="searchPage" class="tab-page hidden">
+          <div class="search-layout">
+            <form id="dealSearchForm" class="card wide-card feature-card">
+              <div class="panel-head">
+                <p class="section-kicker">Discover</p>
+                <h2>Search All Deals</h2>
+                <p class="section-copy">Everything stays searchable here, even if it doesn’t trigger a personal alert.</p>
+              </div>
+              <div class="search-composer">
+                <div class="search-control-panel">
+                  <div class="search-row">
+                    <input id="dealSearchInput" name="keyword" placeholder="pizza, chicken, beer, coffee..." />
+                    <button type="submit">Search</button>
+                  </div>
+                  <div class="search-shortcuts">
+                    <span class="search-shortcuts-label">Try a quick search</span>
+                    <div class="search-shortcut-row">
+                      <button class="secondary-button small-button" type="button" data-search-shortcut="pizza">Pizza</button>
+                      <button class="secondary-button small-button" type="button" data-search-shortcut="chicken">Chicken</button>
+                      <button class="secondary-button small-button" type="button" data-search-shortcut="coffee">Coffee</button>
+                      <button class="secondary-button small-button" type="button" data-search-shortcut="beer">Beer</button>
+                    </div>
+                  </div>
+                  <div class="search-filters">
+                    <label>Zip Code <input name="zipFilter" placeholder="80205" /></label>
+                    <label>Type
+                      <select name="typeFilter">
+                        <option value="">All local deals</option>
+                        <option value="company">Local businesses</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="search-toolbar">
+                    <button id="browseLatestBtn" class="secondary-button" type="button">Browse Latest Deals</button>
+                    <button id="clearSearchFiltersBtn" class="secondary-button" type="button">Clear Filters</button>
+                  </div>
+                </div>
+                <div class="search-results-panel">
+                  <div id="dealSearchResult" class="result search-result">
+                    <div class="search-empty-state">Search for something like pizza, tacos, coffee, or chicken, or browse the latest deals.</div>
+                  </div>
+                </div>
+              </div>
+            </form>
+
+            <div class="sidebar-stack">
+              <section class="card alerts-card">
+                <div class="panel-head">
+                  <p class="section-kicker">For You</p>
+                  <h2>Your Alerts</h2>
+                  <p class="section-copy">Only deals matching your zip code and favorites show up here.</p>
+                </div>
+                <p id="alertsSummary" class="alerts-summary">No alerts yet. Your saved interests will start shaping this feed once matching runs.</p>
+                <div id="alertsMetrics" class="alerts-metrics"></div>
+                <div id="alertsView" class="alerts-list">
+                  <div class="search-empty-state">No alerts yet. Run matching or add favorites to see personalized deals.</div>
+                </div>
+              </section>
+
+              <details class="card data-card debug-card">
+                <summary>Debug View</summary>
+                <div class="debug-body">
+                  <h2>Live Data</h2>
+                  <button id="refreshBtn" class="secondary-button" type="button">Refresh Dashboard</button>
+                  <h3>Users</h3>
+                  <pre id="usersView" class="result compact"></pre>
+                  <h3>Deals</h3>
+                  <pre id="dealsView" class="result compact"></pre>
+                  <h3>Notifications</h3>
+                  <pre id="notificationsView" class="result compact"></pre>
+                </div>
+              </details>
+            </div>
+          </div>
+        </section>
+
+        <section id="favoritesPage" class="tab-page hidden">
+          <form id="favoritesForm" class="card wide-card feature-card full-page-card">
+            <div class="panel-head">
+              <p class="section-kicker">Personal Alerts</p>
+              <h2>Alert Interests</h2>
+              <p class="section-copy">Save the products and categories you care about. Alerts only trigger when those interests match a deal in your zip code.</p>
+            </div>
+            <div class="favorites-shell">
+              <div class="favorites-editor">
+                <div class="favorites-suggestions">
+                  <span class="favorites-suggestions-label">Quick add</span>
+                  <div id="favoriteSuggestions" class="suggestion-row"></div>
+                </div>
+                <label>Add favorites <input name="alertInterests" placeholder="rice, beer, chicken" required /></label>
+                <button type="submit">Add To Favorites</button>
+                <p id="favoritesResult" class="result"></p>
+              </div>
+              <div class="favorites-dashboard">
+                <p id="favoritesSummary" class="favorites-summary">Save a few favorites to make alerts feel personal instead of noisy.</p>
+                <div id="favoritesInsights" class="favorites-insights"></div>
+                <details id="favoritesDropdown" class="favorites-dropdown">
+                  <summary>All Favorites <span id="favoritesCount">0</span></summary>
+                  <div id="favoritesList" class="favorites-list"></div>
+                </details>
+              </div>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+    <div id="dealCardBackdrop" class="deal-backdrop hidden" aria-hidden="true"></div>
+    <div id="dealModal" class="deal-modal hidden" aria-hidden="true"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="/static/app.js?v=20260806c"></script>
+  </body>
+</html>

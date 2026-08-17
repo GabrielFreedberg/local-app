@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.local
+.venv/
+venv/
+
+phase1.db
+match_run_log.jsonl
+notification_log.jsonl
+
+.pytest_cache/

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>v1</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Iteration 1</p>
+          <h1>v1</h1>
+          <p class="lede">
+            Local first-cut of the grocery + company deal workflow. Users log in with
+            email and password, save their alert interests, and only get alerts for
+            matching deals in their zip code.
+          </p>
+          <p class="notice">
+            Email delivery uses SMTP when configured. Without SMTP settings, sends
+            appear in <code>notification_log.jsonl</code> as mocked notifications.
+          </p>
+        </div>
+        <div class="actions">
+          <button id="ingestBtn">1. Ingest Mock Deals</button>
+          <button id="matchBtn">2. Match + Notify</button>
+        </div>
+      </section>
+
+      <section id="authShell" class="auth-shell">
+        <div class="auth-grid">
+          <form id="loginForm" class="card feature-card">
+            <h2>Login</h2>
+            <p class="helper">Use your email and password to open your account. Users and companies each get their own flow after login.</p>
+            <label>Email <input name="email" type="email" placeholder="you@example.com" required /></label>
+            <label>Password <input name="password" type="password" placeholder="Password" required /></label>
+            <button type="submit">Log In</button>
+            <p id="loginResult" class="result"></p>
+          </form>
+
+          <form id="userSignupForm" class="card feature-card">
+            <h2>Create User Account</h2>
+            <p class="helper">User accounts can search all deals and manage favorites for alerts.</p>
+            <label>Phone Number <input name="phoneNumber" placeholder="+13035550123" required /></label>
+            <label>Email <input name="email" type="email" placeholder="you@example.com" required /></label>
+            <label>Password <input name="password" type="password" placeholder="Create a password" required /></label>
+            <label>Zip Code <input name="zipCode" value="80205" required /></label>
+            <button type="submit">Create User Account</button>
+            <p id="userSignupResult" class="result"></p>
+          </form>
+
+          <form id="companySignupForm" class="card feature-card">
+            <h2>Create Company Account</h2>
+            <p class="helper">Company accounts can log in and post local deals only.</p>
+            <label>Company Name <input name="companyName" placeholder="Joe's Bodega" required /></label>
+            <label>Phone Number <input name="phoneNumber" placeholder="+13035550123" required /></label>
+            <label>Email <input name="email" type="email" placeholder="owner@company.com" required /></label>
+            <label>Password <input name="password" type="password" placeholder="Create a password" required /></label>
+            <label>Zip Code <input name="zipCode" value="80205" required /></label>
+            <button type="submit">Create Company Account</button>
+            <p id="companySignupResult" class="result"></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="appShell" class="app-shell hidden">
+        <div class="session-bar card">
+          <div>
+            <p class="session-label">Logged In As</p>
+            <strong id="sessionEmail">-</strong>
+            <span id="sessionType" class="session-zip"></span>
+            <span id="sessionZip" class="session-zip"></span>
+          </div>
+          <button id="logoutBtn" type="button">Log Out</button>
+        </div>
+
+        <nav id="tabsNav" class="tabs" aria-label="App sections">
+          <button class="tab role-company is-active" data-tab="companyPage" type="button">Company</button>
+          <button class="tab role-user" data-tab="feedPage" type="button">Feed</button>
+          <button class="tab role-user" data-tab="searchPage" type="button">Search</button>
+          <button class="tab role-user" data-tab="interestsPage" type="button">Favorites</button>
+        </nav>
+
+        <section id="companyPage" class="tab-page is-active role-company-page">
+          <div class="single-column">
+            <form id="companyDealForm" class="card feature-card">
+              <h2>Company Deal Blast</h2>
+              <p class="helper">Submit a local deal. Users only get alerts if the deal matches both their zip code and one of their alert interests.</p>
+              <label>Company Name <input id="companyNameInput" name="companyName" placeholder="Joe's Bodega" required /></label>
+              <label>Zip Code <input name="zipCode" value="80205" required /></label>
+              <label>Deal Description <textarea name="dealDescription" rows="4" placeholder="Avocados 3 for $1 this weekend" required></textarea></label>
+              <button type="submit">Send Company Deal</button>
+              <pre id="companyDealResult" class="result"></pre>
+            </form>
+          </div>
+        </section>
+
+        <section id="feedPage" class="tab-page role-user-page">
+          <div class="feed-layout">
+            <section class="feed-shell">
+              <div class="feed-header">
+                <div>
+                  <h2>Deal Feed</h2>
+                  <p class="helper">Scroll through the latest grocery and local deals in one continuous feed.</p>
+                </div>
+                <button id="refreshFeedBtn" type="button">Refresh Feed</button>
+              </div>
+              <div id="dealsFeed" class="deals-feed" aria-live="polite"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="searchPage" class="tab-page role-user-page">
+          <div class="search-layout">
+            <form id="dealSearchForm" class="card search-card">
+              <h2>Search All Deals</h2>
+              <p class="helper">All deals are searchable here, even if they do not match your alert interests.</p>
+              <div class="search-row">
+                <input name="keyword" placeholder="Search for chicken, pizza, eggs..." required />
+                <button type="submit">Find Matching Deals</button>
+              </div>
+              <pre id="dealSearchResult" class="result search-result tall"></pre>
+            </form>
+
+            <section class="card">
+              <h2>Live Data</h2>
+              <div class="stack">
+                <button id="refreshBtn">Refresh Dashboard</button>
+                <h3>Users</h3>
+                <pre id="usersView" class="result tall"></pre>
+                <h3>Deals</h3>
+                <pre id="dealsView" class="result tall"></pre>
+                <h3>Notifications</h3>
+                <pre id="notificationsView" class="result tall"></pre>
+                <h3>Email Outbox</h3>
+                <pre id="emailOutboxView" class="result tall"></pre>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="interestsPage" class="tab-page role-user-page">
+          <div class="single-column">
+            <form id="interestsForm" class="card feature-card">
+              <h2>Alert Interests</h2>
+              <p class="helper">Save the deal categories or keywords you care about most. Suggested field name: <strong>Alert Interests</strong>.</p>
+              <label>Add favorites for alerts <input name="alertInterests" placeholder="rice, beer, chicken, avocados" required /></label>
+              <button type="submit">Add To Favorites</button>
+              <pre id="interestsResult" class="result"></pre>
+              <h3>Current Alert Interests</h3>
+              <details class="favorites-dropdown">
+                <summary>
+                  All Favorites
+                  <span id="favoritesCount" class="favorites-count">0</span>
+                </summary>
+                <div id="currentInterestsView" class="favorites-list"></div>
+              </details>
+            </form>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+  </html>
