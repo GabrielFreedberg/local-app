@@ -167,6 +167,100 @@ in two places — the database guarantees it.
 
 ---
 
+## 4.5 The matching engine, in depth (updated 2026-08-17)
+
+This is a good section to know cold for an interview, because it's a real
+bug that shipped, got caught, and got fixed — not a hypothetical.
+
+### The bug: substring matching
+
+The original `matching_interest_for_deal` did this:
+
+```python
+return next((interest for interest in interests if interest in haystack), None)
+```
+
+`in` on strings is a substring check. That means an interest of `"ice"`
+matched any deal whose text contained `"service"`, `"price"`, or
+`"spice"` — none of which have anything to do with ice. It also meant an
+interest of `"pizza"` did *not* reliably match `"pizzas"` in a
+boundary-sensitive way, which happened to work only by the same accident
+that caused the false positives.
+
+### The fix: word-boundary matching
+
+```python
+def interest_matches_haystack(interest, haystack):
+    pattern = r"(?<![a-z0-9])" + re.escape(interest) + r"(?:es|s)?(?![a-z0-9])"
+    return re.search(pattern, haystack) is not None
+```
+
+This uses zero-width lookaround assertions (`(?<!...)` negative lookbehind,
+`(?!...)` negative lookahead) to require that the interest appears as its
+own token — not embedded inside a longer alphanumeric run — while
+explicitly allowing a trailing `s`/`es` so simple plurals still match. This
+is the kind of regex detail worth being able to explain precisely in an
+interview: lookaround assertions match a *position*, not characters, so
+they don't consume input and don't affect what `re.escape(interest)`
+itself matched.
+
+### The recall gap that's left, and how AI closes some of it
+
+Word-boundary matching is *correct* but still only catches shared words. A
+shopper interested in `"tacos"` still won't match a deal titled `"Cinco de
+Mayo Fiesta Special"` — there's no shared token, so no keyword match can
+ever catch this class of miss. That's a real product gap (recall, not
+precision), and it's the concrete, defensible answer to "how would you use
+AI to improve this" in an interview, as opposed to a vague "we could add
+AI somewhere."
+
+The implementation (`ai_extract_categories` in `app.py`) makes two
+deliberate choices that are worth being able to defend:
+
+1. **Closed taxonomy, not free-form tags.** If you ask a model to freely
+   generate tags for `"tacos"` and separately for `"Cinco de Mayo Fiesta
+   Special"`, there's no guarantee the two tag sets share a string — free
+   generation is high-entropy. Asking the model to classify both against
+   the *same fixed list* of ~30 categories (`AI_CATEGORY_TAXONOMY`)
+   collapses that entropy: both plausibly land on `"mexican"`. This is a
+   general pattern for making independently-generated AI output
+   comparable — constrain the output space until it can only vary along
+   the dimension you actually care about.
+2. **Write-time computation with process-lifetime caching, not
+   request-time.** The naive way to add this would be: for every
+   (shopper, deal) pair in the matching job, ask the model "do these
+   match?" That's O(users × deals) API calls — slow, expensive, and adds
+   external-network flakiness to the one job that's supposed to be
+   reliable and fast. Instead, categories are computed once per *distinct*
+   piece of text (one deal description, one saved interest string) via
+   `functools.lru_cache`, and reused for every user who shares that
+   interest and every run that sees that deal again. That's O(unique
+   deals + unique interests), computed once, not O(users × deals),
+   computed every run. This distinction — push expensive/uncertain work to
+   write time and cache it, keep the hot read/matching path fast and
+   deterministic — is a real system design principle, not specific to AI.
+
+It also fails closed by design: no API key, a network error, a timeout, or
+a model response that isn't valid JSON from the fixed taxonomy all just
+return an empty result, silently falling back to keyword-only matching.
+The feature can never make matching *worse* or block a deal/interest from
+saving — it can only add matches a shopper would otherwise have missed.
+
+### The other change: digesting
+
+The matching job also changed from "one email per match" to "one email per
+user per run, covering every match found in that run." The dedupe
+invariant (`unique(user_id, deal_id, matched_interest, channel)` on
+`notifications`, see above) didn't change — every individual match is
+still written as its own row and still shown separately in the UI. Only
+the *delivery* step changed, from N `send_match_email` calls to 1. This is
+the same "alerts are high signal, not noisy" product rule the app was
+built around, extended to a place it hadn't been applied yet: matching
+being correct doesn't help if five correct matches in one run means five
+separate emails.
+
+---
+
 ## 5. Security, in depth
 
 ### Password hashing
@@ -501,6 +595,23 @@ loop comfortably handles on a schedule.
 
 **"Tell me about a mistake in this project and what you learned."**
 See §10's disclosure above — a concrete, real one, not a hypothetical.
+
+**"How would you use AI to actually improve a matching/search feature, beyond just 'call an LLM'?"**
+See §4.5. The concrete answer here: classify both sides (deal text and
+saved interest) against the same fixed taxonomy rather than generating
+free-form tags, because a closed vocabulary is what makes two independent
+classifications comparable at all. And compute it once per distinct
+input, cached, at write time — never per (user, deal) pair at request
+time — so the feature can't turn an O(n) job into an O(users × deals) one
+or make the matching job depend on network reliability.
+
+**"Give an example of finding and fixing a real bug, not just a feature."**
+§4.5's substring-matching bug: an interest of "ice" matched deal text
+containing "service" or "price" because the original code used Python's
+`in` operator (substring containment) instead of a word-boundary check.
+Caught by reasoning about the matching function directly, fixed with a
+regex using lookaround assertions, covered with a regression test
+asserting the specific false positive no longer matches.
 
 ---
 

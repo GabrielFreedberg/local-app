@@ -163,6 +163,25 @@ a { color: inherit; }
   background: radial-gradient(circle, var(--coral-soft), transparent 70%);
   pointer-events: none;
 }
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: auto auto -80px -80px;
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--teal-soft), transparent 70%);
+  pointer-events: none;
+}
+.hero-copy, .hero-panel { animation: hero-rise 480ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.hero-panel { animation-delay: 60ms; }
+@keyframes hero-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-copy, .hero-panel { animation: none; }
+}
 .eyebrow {
   display: inline-flex;
   align-items: center;
@@ -247,6 +266,7 @@ a { color: inherit; }
 .system-status-badge {
   display: inline-flex;
   align-items: center;
+  gap: 7px;
   justify-self: start;
   min-height: 28px;
   padding: 5px 11px;
@@ -259,13 +279,29 @@ a { color: inherit; }
   color: var(--warn);
   border: 1px solid transparent;
 }
+.system-status-badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
 .system-status-badge.is-live {
   color: var(--success);
   background: var(--success-bg);
 }
+.system-status-badge.is-live::before { animation: status-pulse 1.8s ease-in-out infinite; }
 .system-status-badge.is-mock {
   color: var(--warn);
   background: var(--warn-bg);
+}
+@keyframes status-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(20, 122, 82, 0.35); }
+  50% { box-shadow: 0 0 0 4px rgba(20, 122, 82, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .system-status-badge.is-live::before { animation: none; }
 }
 .system-status-note { margin: 0; color: var(--ink-soft); font-size: 0.9rem; line-height: 1.5; }
 .system-status-subnote { margin: 0; color: var(--muted); font-size: 0.85rem; line-height: 1.5; }
@@ -782,6 +818,28 @@ button:active { transform: translateY(0); }
 .deal-thumb { width: 100%; height: 100%; padding: 0; border-radius: var(--radius-md); background: transparent; border: 0; display: flex; justify-content: center; align-items: center; overflow: hidden; position: relative; box-shadow: none; }
 .deal-thumb.has-image { background: #fff; }
 .deal-thumb.has-image img { width: 100%; height: 100%; object-fit: cover; display: block; margin: 0; border-radius: var(--radius-md); }
+
+/* Deals without a real photo get a monogram instead of a flat empty box. */
+.deal-thumb-empty {
+  background:
+    radial-gradient(140px 100px at 80% -20%, rgba(255, 255, 255, 0.55), transparent 60%),
+    linear-gradient(160deg, var(--thumb-a), var(--thumb-b));
+}
+.deal-thumb-monogram {
+  font-family: var(--font-sans);
+  font-size: 2.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--thumb-ink);
+  opacity: 0.6;
+  user-select: none;
+  line-height: 1;
+}
+.deal-thumb-variant-0 { --thumb-a: #ffe3d6; --thumb-b: #ffb49a; --thumb-ink: var(--coral-dark); }
+.deal-thumb-variant-1 { --thumb-a: #e3f0eb; --thumb-b: #b2d6c9; --thumb-ink: var(--teal-dark); }
+.deal-thumb-variant-2 { --thumb-a: #fbe9c8; --thumb-b: #edc272; --thumb-ink: var(--warn); }
+.deal-thumb-variant-3 { --thumb-a: #e7e1f7; --thumb-b: #c2b2ea; --thumb-ink: var(--info); }
+.deal-thumb-variant-4 { --thumb-a: #dcefe0; --thumb-b: #a3d3ae; --thumb-ink: var(--success); }
 .deal-card-title, .deal-modal h2 { margin: 0; width: 100%; color: var(--ink); font-size: 1.01rem; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; text-align: center; overflow: hidden; text-overflow: ellipsis; }
 .deal-card-preview { margin: 0; color: var(--muted); font-size: 0.84rem; line-height: 1.46; text-align: center; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .deal-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; margin-top: auto; padding-top: 4px; border-top: 1px solid var(--line); }
@@ -1024,7 +1082,7 @@ button:active { transform: translateY(0); }
 .favorite-item-actions { display: inline-flex; align-items: center; gap: 10px; }
 .favorite-edit {
   padding: 8px 12px;
-  min-height: auto;
+  min-height: 40px;
   border-radius: var(--radius-pill);
   background: #fff;
   border: 1px solid var(--line-strong);
@@ -1034,12 +1092,12 @@ button:active { transform: translateY(0); }
 }
 .favorite-edit:hover { background: var(--card-tint); }
 .favorite-edit-row { display: grid; gap: 12px; width: 100%; }
-.favorite-edit-input { width: 100%; }
+.favorite-edit-input { width: 100%; min-height: 40px; }
 .favorite-edit-actions { display: flex; gap: 10px; justify-content: flex-end; }
-.favorite-save, .favorite-cancel { min-height: auto; padding: 8px 12px; border-radius: var(--radius-pill); font-size: 0.82rem; }
+.favorite-save, .favorite-cancel { min-height: 40px; padding: 8px 14px; border-radius: var(--radius-pill); font-size: 0.82rem; }
 .favorite-cancel { background: #fff; color: var(--ink-soft); border: 1px solid var(--line-strong); }
 .favorite-cancel:hover { background: var(--card-tint); }
-.heart { min-width: 40px; padding: 0; border: 0; background: transparent; color: var(--coral); font-size: 1.2rem; line-height: 1; box-shadow: none; }
+.heart { min-width: 44px; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--coral); font-size: 1.2rem; line-height: 1; box-shadow: none; }
 .heart:hover { background: transparent; color: var(--coral-dark); transform: none; }
 .empty { color: var(--muted); font-style: italic; }
 .hidden { display: none !important; }
@@ -1106,5 +1164,7 @@ button:active { transform: translateY(0); }
   .merchant-health-board, .merchant-insight-deck, .favorites-insights { grid-template-columns: 1fr; }
   .company-form-meta { flex-direction: column; align-items: flex-start; }
   .favorite-item { align-items: flex-start; flex-direction: column; }
-  .favorite-item-actions, .favorite-edit-actions { width: 100%; justify-content: space-between; }
+  .favorite-item-actions, .favorite-edit-actions { width: 100%; justify-content: space-between; gap: 14px; }
+  .favorite-edit, .favorite-save, .favorite-cancel { flex: 1 1 auto; }
+  .heart { min-width: 48px; min-height: 48px; }
 }

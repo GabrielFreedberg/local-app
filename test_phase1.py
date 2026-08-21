@@ -37,8 +37,11 @@ class Phase1ApiTests(unittest.TestCase):
         cls.temp_dir.cleanup()
 
     def setUp(self):
-        for key in ("SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "EMAIL_FROM"):
+        for key in ("SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "EMAIL_FROM", "ANTHROPIC_API_KEY", "AI_CATEGORY_MODEL", "PORT"):
             os.environ.pop(key, None)
+        app.ai_extract_categories.cache_clear()
+        with app.LOGIN_ATTEMPT_LOCK:
+            app.LOGIN_ATTEMPTS.clear()
         if app.DB_PATH.exists():
             app.DB_PATH.unlink()
         if app.NOTIFICATION_LOG.exists():
@@ -479,7 +482,12 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertGreater(first_payload["notificationsSent"], 0)
         self.assertEqual(second_status, 200)
         self.assertEqual(second_payload["notificationsSent"], 0)
-        self.assertEqual(send_mock.call_count, first_payload["notificationsSent"])
+        # Digesting: however many deals matched, this one user gets exactly
+        # ONE email covering all of them in this run, and zero on the second
+        # (fully deduped) run.
+        self.assertEqual(send_mock.call_count, 1)
+        sent_matches = send_mock.call_args.args[1]
+        self.assertEqual(len(sent_matches), first_payload["notificationsSent"])
 
     def test_system_status_reports_mock_mode_without_smtp(self):
         status, payload = self.api("/api/system-status")
@@ -823,6 +831,153 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertEqual(len(payload), len(app.MOCK_PIZZA_DEALS))
         self.assertTrue(all(item["category"] == "Demo Pizza" for item in payload))
         self.assertEqual(rest_mock.call_args_list[2].args[0], "deals?select=id&category=eq.Demo%20Pizza")
+
+    # --- interest_matches_haystack: word-boundary matching -----------------
+
+    def test_interest_matches_haystack_rejects_substring_false_positive(self):
+        # "ice" must NOT match "service"/"price"/"spice" — the bug in the
+        # original plain `interest in haystack` substring check.
+        self.assertFalse(app.interest_matches_haystack("ice", "great service and fair price today"))
+        self.assertTrue(app.interest_matches_haystack("ice", "free ice with any order"))
+
+    def test_interest_matches_haystack_matches_simple_plural(self):
+        self.assertTrue(app.interest_matches_haystack("pizza", "buy two pizzas get one free"))
+        self.assertTrue(app.interest_matches_haystack("taco", "tacos tuesday special"))
+
+    def test_interest_matches_haystack_matches_whole_word_only(self):
+        self.assertTrue(app.interest_matches_haystack("pizza", "fresh pizza tonight"))
+        self.assertFalse(app.interest_matches_haystack("pin", "everything in the shop is on sale"))
+
+    def test_matching_interest_for_deal_uses_word_boundary(self):
+        deal = {"title": "Great Service Special", "description": "Fair price on every visit", "sourceStore": None}
+        self.assertIsNone(app.matching_interest_for_deal(["ice"], deal))
+        deal2 = {"title": "Free Ice Cream Friday", "description": "Kids scoop free", "sourceStore": None}
+        self.assertEqual(app.matching_interest_for_deal(["ice"], deal2), "ice")
+
+    # --- ai_extract_categories: optional AI-assisted matching --------------
+
+    def test_ai_extract_categories_returns_empty_when_not_configured(self):
+        self.assertEqual(app.ai_extract_categories("tacos and margaritas"), frozenset())
+
+    def test_ai_extract_categories_parses_model_response(self):
+        os.environ["ANTHROPIC_API_KEY"] = "test-key"
+
+        class FakeResponse:
+            def __init__(self, body):
+                self._body = body
+
+            def read(self):
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        payload = json.dumps({"content": [{"type": "text", "text": '["mexican", "bar"]'}]}).encode("utf-8")
+        with mock.patch.object(app.urllib_request, "urlopen", return_value=FakeResponse(payload)) as urlopen_mock:
+            result = app.ai_extract_categories("Taco Tuesday with $5 margaritas")
+        self.assertEqual(result, frozenset({"mexican", "bar"}))
+        request = urlopen_mock.call_args.args[0]
+        self.assertEqual(request.headers.get("X-api-key"), "test-key")
+
+    def test_ai_extract_categories_ignores_tags_outside_taxonomy(self):
+        os.environ["ANTHROPIC_API_KEY"] = "test-key"
+
+        class FakeResponse:
+            def __init__(self, body):
+                self._body = body
+
+            def read(self):
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        payload = json.dumps({"content": [{"type": "text", "text": '["mexican", "made-up-tag"]'}]}).encode("utf-8")
+        with mock.patch.object(app.urllib_request, "urlopen", return_value=FakeResponse(payload)):
+            result = app.ai_extract_categories("Taco night")
+        self.assertEqual(result, frozenset({"mexican"}))
+
+    def test_ai_extract_categories_fails_closed_on_network_error(self):
+        os.environ["ANTHROPIC_API_KEY"] = "test-key"
+        with mock.patch.object(app.urllib_request, "urlopen", side_effect=urllib.error.URLError("boom")):
+            result = app.ai_extract_categories("anything at all")
+        self.assertEqual(result, frozenset())
+
+    def test_matching_interest_for_deal_uses_ai_category_overlap_when_keywords_miss(self):
+        os.environ["ANTHROPIC_API_KEY"] = "test-key"
+        deal = {"title": "Cinco de Mayo Fiesta Special", "description": "Half-off margaritas all night", "sourceStore": None}
+
+        def fake_categories(text):
+            if "cinco de mayo" in text or "margaritas" in text:
+                return frozenset({"mexican", "bar"})
+            if text == "tacos":
+                return frozenset({"mexican"})
+            return frozenset()
+
+        with mock.patch.object(app, "ai_extract_categories", side_effect=fake_categories):
+            matched = app.matching_interest_for_deal(["tacos"], deal)
+        self.assertEqual(matched, "tacos")
+
+    def test_matching_interest_for_deal_skips_ai_when_not_configured(self):
+        deal = {"title": "Cinco de Mayo Fiesta Special", "description": "Half-off margaritas all night", "sourceStore": None}
+        # No ANTHROPIC_API_KEY set (cleared in setUp) — should stay keyword-only.
+        self.assertIsNone(app.matching_interest_for_deal(["tacos"], deal))
+
+    # --- Login rate limiting -------------------------------------------
+
+    def test_login_locks_out_after_repeated_failures(self):
+        email = self.unique_email("lockout")
+        self.signup_user(email=email, password="Pass1234")
+        for _ in range(app.LOGIN_MAX_ATTEMPTS):
+            status, _ = self.api("/api/login", method="POST", data={"email": email, "password": "wrong-password"})
+            self.assertEqual(status, 401)
+        locked_status, locked_payload = self.api(
+            "/api/login", method="POST", data={"email": email, "password": "wrong-password"}
+        )
+        self.assertEqual(locked_status, 429)
+        self.assertIn("Too many failed attempts", locked_payload["error"])
+        # Even the CORRECT password is refused while locked out.
+        still_locked_status, _ = self.api("/api/login", method="POST", data={"email": email, "password": "Pass1234"})
+        self.assertEqual(still_locked_status, 429)
+
+    def test_successful_login_clears_failure_count(self):
+        email = self.unique_email("recover")
+        self.signup_user(email=email, password="Pass1234")
+        for _ in range(app.LOGIN_MAX_ATTEMPTS - 1):
+            self.api("/api/login", method="POST", data={"email": email, "password": "wrong-password"})
+        success_status, _ = self.api("/api/login", method="POST", data={"email": email, "password": "Pass1234"})
+        self.assertEqual(success_status, 200)
+        # Failure counter reset by the success — next wrong attempt is just a normal 401, not a lockout.
+        next_status, _ = self.api("/api/login", method="POST", data={"email": email, "password": "wrong-password"})
+        self.assertEqual(next_status, 401)
+
+    def test_login_requires_email_and_password(self):
+        status, payload = self.api("/api/login", method="POST", data={"email": "", "password": ""})
+        self.assertEqual(status, 400)
+        self.assertIn("required", payload["error"])
+
+    # --- Password reset token exposure gating ---------------------------
+
+    def test_reset_token_included_in_response_when_not_hosted(self):
+        email = self.unique_email("resettoken")
+        self.signup_user(email=email)
+        status, payload = self.api("/api/password-reset/request", method="POST", data={"email": email})
+        self.assertEqual(status, 200)
+        self.assertIn("resetToken", payload)
+
+    def test_reset_token_omitted_from_response_when_running_on_hosting_platform(self):
+        email = self.unique_email("resettoken-hosted")
+        self.signup_user(email=email)
+        with mock.patch.object(app, "running_on_hosting_platform", return_value=True):
+            status, payload = self.api("/api/password-reset/request", method="POST", data={"email": email})
+        self.assertEqual(status, 200)
+        self.assertNotIn("resetToken", payload)
 
 
 if __name__ == "__main__":

@@ -64,7 +64,10 @@ same shape as any engineer working against real infrastructure.
       needed there
 - [ ] Set environment variables in Railway's dashboard: the 4 Supabase
       values from step 2, plus SMTP values if/when you want real email
-      instead of mocked
+      instead of mocked, plus `ANTHROPIC_API_KEY` if/when you want
+      AI-assisted category matching turned on (see "AI-assisted matching"
+      in `README.md`) — all three groups are optional and the app runs
+      fine with any subset of them set
 - [ ] `app.py` already auto-detects Railway's injected `PORT` variable and
       binds `0.0.0.0` automatically (this was a small code change made
       specifically to support this — see commit history once pushed)

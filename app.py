@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import functools
 import hashlib
 import hmac
 import json
@@ -30,6 +31,10 @@ DEFAULT_COMPANY_DEAL_TTL_DAYS = 7
 DB_SCHEMA_LOCK = threading.Lock()
 DB_SCHEMA_READY = False
 SCHEDULER_STATE_LOCK = threading.Lock()
+LOGIN_ATTEMPT_LOCK = threading.Lock()
+LOGIN_ATTEMPTS = {}
+LOGIN_MAX_ATTEMPTS = 8
+LOGIN_LOCKOUT_MINUTES = 15
 MATCHING_SCHEDULER_STATE = {
     "enabled": False,
     "intervalSeconds": 0,
@@ -479,6 +484,25 @@ def normalized_haystack(*parts):
     return " ".join(" ".join(str(part or "").lower().split()) for part in parts if part).strip()
 
 
+def interest_matches_haystack(interest, haystack):
+    """Word-boundary match instead of raw substring match.
+
+    A plain `interest in haystack` check (the original implementation) has a
+    real false-positive problem: an interest like "ice" matches "service",
+    "price", and "spice" because those strings merely *contain* "ice". It
+    also produces false negatives for phrases with punctuation-adjacent
+    boundaries in ways a shopper wouldn't expect. This matches "interest" (or
+    "interest" + a simple "s"/"es" plural) only when it appears as its own
+    token, so "pizza" still matches "pizzas" but "ice" no longer matches
+    "service".
+    """
+    interest = str(interest or "").strip().lower()
+    if not interest:
+        return False
+    pattern = r"(?<![a-z0-9])" + re.escape(interest) + r"(?:es|s)?(?![a-z0-9])"
+    return re.search(pattern, haystack) is not None
+
+
 def validate_signup(body):
     if normalize_account_type(body.get("accountType")) not in {"user", "company"}:
         raise ValueError("Invalid account type")
@@ -549,6 +573,58 @@ def revoke_all_sessions(conn, user_id):
         "UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
         (now_iso(), user_id),
     )
+
+
+def _recent_login_failures(email):
+    """Must be called while holding LOGIN_ATTEMPT_LOCK. Prunes and returns
+    the failure timestamps still inside the lockout window for `email`."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+    recent = [ts for ts in LOGIN_ATTEMPTS.get(email, []) if ts > cutoff]
+    if recent:
+        LOGIN_ATTEMPTS[email] = recent
+    else:
+        LOGIN_ATTEMPTS.pop(email, None)
+    return recent
+
+
+def login_locked_out(email):
+    """In-memory, per-process login rate limiting (local-prototype mode
+    only — hosted mode authenticates through Supabase Auth directly from
+    the browser, which has its own limits). This resets on every process
+    restart and isn't shared across multiple app instances; it exists to
+    close an documented gap (no rate limiting at all), not to be a
+    production-grade limiter. A real deployment behind Supabase/hosted auth
+    doesn't need this path at all.
+    """
+    if not email:
+        return False
+    with LOGIN_ATTEMPT_LOCK:
+        return len(_recent_login_failures(email)) >= LOGIN_MAX_ATTEMPTS
+
+
+def record_login_failure(email):
+    if not email:
+        return
+    with LOGIN_ATTEMPT_LOCK:
+        _recent_login_failures(email)
+        LOGIN_ATTEMPTS.setdefault(email, []).append(datetime.now(timezone.utc))
+
+
+def clear_login_failures(email):
+    with LOGIN_ATTEMPT_LOCK:
+        LOGIN_ATTEMPTS.pop(email, None)
+
+
+def running_on_hosting_platform():
+    """True once we're deployed somewhere (Railway/Render/Heroku-style),
+    detected the same way app_host()/app_port() detect it: those platforms
+    inject PORT. Used to stop handing raw password-reset tokens back in the
+    API response once this is a real deployment, even before SMTP/Supabase
+    are fully configured there — that behavior is a local-dev-only
+    convenience, not something safe to leave on for anyone who can reach a
+    public URL.
+    """
+    return bool(os.environ.get("PORT", "").strip())
 
 
 def create_password_reset_token(conn, user_id):
@@ -734,6 +810,91 @@ def supabase_deal_to_dict(row):
         "createdAt": row.get("created_at"),
         "updatedAt": row.get("updated_at"),
     }
+
+
+# Fixed taxonomy for AI-assisted category matching. Deliberately closed
+# (rather than free-form tags) so that a deal's independently-generated tags
+# and a shopper's independently-generated tags actually have a chance of
+# overlapping — two open-ended tag generations for "tacos" and "Mexican
+# food" won't reliably produce the same string, but two closed-vocabulary
+# classifications both landing on "mexican" will.
+AI_CATEGORY_TAXONOMY = [
+    "pizza", "mexican", "italian", "asian", "bbq", "seafood", "breakfast",
+    "coffee", "bakery", "dessert", "burgers", "sandwiches", "bar", "alcohol",
+    "grocery", "meat", "produce", "dairy", "beauty", "fitness", "auto",
+    "home-services", "pet", "kids", "electronics", "clothing", "hardware",
+    "pharmacy", "entertainment",
+]
+
+
+def ai_settings():
+    return {
+        "api_key": os.environ.get("ANTHROPIC_API_KEY", "").strip(),
+        "model": os.environ.get("AI_CATEGORY_MODEL", "").strip() or "claude-3-5-haiku-latest",
+    }
+
+
+def ai_categorization_enabled():
+    return bool(ai_settings()["api_key"])
+
+
+@functools.lru_cache(maxsize=512)
+def ai_extract_categories(text):
+    """Return a frozenset of AI_CATEGORY_TAXONOMY tags that apply to `text`.
+
+    This is a recall booster layered on top of (never a replacement for)
+    keyword matching — it lets a shopper interested in "tacos" match a deal
+    titled "Cinco de Mayo fiesta special" even though no shared word exists.
+    It is intentionally computed once per unique piece of text (deal
+    description, or a saved interest) and cached in-process, so a matching
+    run over many users never makes more API calls than there are distinct
+    deals/interests, not one per user x deal pair. Any failure — no API key
+    configured, network error, timeout, unparseable model output — returns
+    an empty frozenset rather than raising, so this can never break matching
+    or block a deal/interest from saving.
+    """
+    normalized = " ".join(str(text or "").split())
+    if not normalized or not ai_categorization_enabled():
+        return frozenset()
+    settings = ai_settings()
+    prompt = (
+        "Classify the following short text against this fixed list of "
+        "categories. Respond with ONLY a JSON array (no prose, no markdown "
+        "fences) containing zero to four exact strings from this list that "
+        f"apply: {AI_CATEGORY_TAXONOMY}\n\nText: {normalized}"
+    )
+    request = urllib_request.Request(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": settings["api_key"],
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        data=json.dumps(
+            {
+                "model": settings["model"],
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+        ).encode("utf-8"),
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(request, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8") or "{}")
+        raw_text = "".join(
+            block.get("text", "") for block in payload.get("content", []) if isinstance(block, dict)
+        ).strip()
+        if raw_text.startswith("```"):
+            raw_text = raw_text.strip("`")
+            raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text
+        tags = json.loads(raw_text)
+        if not isinstance(tags, list):
+            return frozenset()
+        allowed = set(AI_CATEGORY_TAXONOMY)
+        return frozenset(tag for tag in tags if isinstance(tag, str) and tag in allowed)
+    except Exception:
+        return frozenset()
 
 
 def smtp_settings():
@@ -1060,31 +1221,40 @@ def system_status():
     }
 
 
-def send_match_email(user, deal, matched_interest, message):
+def send_match_email(user, matches):
+    """Send ONE email per user per matching run, covering every match found
+    in that run, instead of one email per match. This is what keeps "alerts
+    are high signal, not noisy" true as deal volume grows: a shopper whose
+    interests hit five deals in the same scheduler tick gets a single digest,
+    not five separate emails. `matches` is a list of
+    {"deal": deal, "matchedInterest": str, "message": str} dicts, always at
+    least one.
+    """
     settings = smtp_settings()
     if not smtp_is_configured():
         return {"channel": "email", "status": "mocked", "error": None}
-    subject = f"New deal match in {user['zipCode']}: {deal['sourceStore'] or deal['title']}"
+    count = len(matches)
+    subject = (
+        f"New deal match in {user['zipCode']}"
+        if count == 1
+        else f"{count} new deal matches in {user['zipCode']}"
+    )
     email_message = EmailMessage()
     email_message["Subject"] = subject
     email_message["From"] = settings["email_from"]
     email_message["To"] = user["email"]
-    email_message.set_content(
-        "\n".join(
+    lines = ["Hi there,", "", "We found new deals that match your favorites:", ""]
+    for match in matches:
+        deal = match["deal"]
+        lines.extend(
             [
-                f"Hi there,",
+                f"- {deal['sourceStore'] or deal['title']} (matches: {match['matchedInterest']})",
+                f"  {deal['description']}",
+                f"  Zip code: {deal['zipCode']} | Address: {deal.get('address') or 'Address coming soon'}",
                 "",
-                f"We found a new deal that matches your favorite: {matched_interest}",
-                "",
-                f"Business: {deal['sourceStore'] or deal['title']}",
-                f"Deal: {deal['description']}",
-                f"Zip code: {deal['zipCode']}",
-                f"Address: {deal.get('address') or 'Address coming soon'}",
-                "",
-                message,
             ]
         )
-    )
+    email_message.set_content("\n".join(lines))
     with smtplib.SMTP(settings["host"], settings["port"], timeout=20) as server:
         server.starttls()
         server.login(settings["username"], settings["password"])
@@ -1520,7 +1690,15 @@ def notification_dedupe_keys(notifications):
 
 def matching_interest_for_deal(interests, deal):
     haystack = normalized_haystack(deal["title"], deal["description"], deal.get("sourceStore"))
-    return next((interest for interest in interests if interest in haystack), None)
+    matched = next((interest for interest in interests if interest_matches_haystack(interest, haystack)), None)
+    if matched:
+        return matched
+    if not ai_categorization_enabled():
+        return None
+    deal_categories = ai_extract_categories(haystack)
+    if not deal_categories:
+        return None
+    return next((interest for interest in interests if ai_extract_categories(interest) & deal_categories), None)
 
 
 def build_match_message(user, deal, matched_interest):
@@ -1582,6 +1760,37 @@ def run_matching_job(trigger="manual"):
         raise
 
 
+def collect_user_matches(user, deals, existing_notifications):
+    """Find every not-yet-notified deal match for one user in this run.
+
+    Pulled out of match_and_notify so both the Supabase and SQLite branches
+    build the same shape of match list, which is what makes it possible to
+    send one digest email per user instead of one email per match.
+    """
+    interests = [item.strip().lower() for item in user["alertInterests"] if item.strip()]
+    if not interests:
+        return []
+    matches = []
+    for deal in deals:
+        if deal["zipCode"] != user["zipCode"]:
+            continue
+        matched = matching_interest_for_deal(interests, deal)
+        if not matched:
+            continue
+        dedupe_key = (user["id"], deal["id"], matched, "email")
+        if dedupe_key in existing_notifications:
+            continue
+        matches.append(
+            {
+                "deal": deal,
+                "matchedInterest": matched,
+                "message": build_match_message(user, deal, matched),
+                "dedupeKey": dedupe_key,
+            }
+        )
+    return matches
+
+
 def match_and_notify():
     if supabase_is_configured():
         users = [user for user in all_users() if user["accountType"] == "user"]
@@ -1591,54 +1800,46 @@ def match_and_notify():
         for user in users:
             if not normalize_email(user.get("email")) or not user.get("zipCode"):
                 continue
-            interests = [item.strip().lower() for item in user["alertInterests"] if item.strip()]
-            if not interests:
+            new_matches = collect_user_matches(user, deals, existing_notifications)
+            if not new_matches:
                 continue
-            for deal in deals:
-                if deal["zipCode"] != user["zipCode"]:
-                    continue
-                matched = matching_interest_for_deal(interests, deal)
-                if not matched:
-                    continue
-                dedupe_key = (user["id"], deal["id"], matched, "email")
-                if dedupe_key in existing_notifications:
-                    continue
-                message = build_match_message(user, deal, matched)
-                try:
-                    delivery = send_match_email(user, deal, matched, message)
+            try:
+                delivery = send_match_email(user, new_matches)
+                for match in new_matches:
                     insert_supabase_notification(
                         {
                             "user_id": user["id"],
-                            "deal_id": deal["id"],
-                            "matched_interest": matched,
+                            "deal_id": match["deal"]["id"],
+                            "matched_interest": match["matchedInterest"],
                             "channel": delivery["channel"],
                             "status": delivery["status"],
-                            "message": message,
+                            "message": match["message"],
                             "created_at": now_iso(),
                         }
                     )
                     log_notification(
                         {
                             "userId": user["id"],
-                            "dealId": deal["id"],
-                            "matchedInterest": matched,
+                            "dealId": match["deal"]["id"],
+                            "matchedInterest": match["matchedInterest"],
                             "status": delivery["status"],
                             "channel": delivery["channel"],
-                            "message": message,
+                            "message": match["message"],
                             "createdAt": now_iso(),
                         }
                     )
-                    existing_notifications.add(dedupe_key)
+                    existing_notifications.add(match["dedupeKey"])
                     sent += 1
-                except Exception as exc:
+            except Exception as exc:
+                for match in new_matches:
                     insert_supabase_notification(
                         {
                             "user_id": user["id"],
-                            "deal_id": deal["id"],
-                            "matched_interest": matched,
+                            "deal_id": match["deal"]["id"],
+                            "matched_interest": match["matchedInterest"],
                             "channel": "email",
                             "status": "failed",
-                            "message": message,
+                            "message": match["message"],
                             "error_message": str(exc),
                             "created_at": now_iso(),
                         }
@@ -1652,50 +1853,51 @@ def match_and_notify():
     for user in users:
         if not normalize_email(user.get("email")) or not user.get("zipCode"):
             continue
-        interests = [item.strip().lower() for item in user["alertInterests"] if item.strip()]
-        if not interests:
+        new_matches = collect_user_matches(user, deals, existing_notifications)
+        if not new_matches:
             continue
-        for deal in deals:
-            if deal["zipCode"] != user["zipCode"]:
-                continue
-            matched = matching_interest_for_deal(interests, deal)
-            if not matched:
-                continue
-            dedupe_key = (user["id"], deal["id"], matched, "email")
-            if dedupe_key in existing_notifications:
-                continue
-            message = build_match_message(user, deal, matched)
-            try:
-                delivery = send_match_email(user, deal, matched, message)
+        try:
+            delivery = send_match_email(user, new_matches)
+            for match in new_matches:
                 conn.execute(
                     """
                     INSERT INTO notifications (id, user_id, deal_id, matched_interest, channel, status, message, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (str(uuid.uuid4()), user["id"], deal["id"], matched, delivery["channel"], delivery["status"], message, now_iso()),
+                    (
+                        str(uuid.uuid4()),
+                        user["id"],
+                        match["deal"]["id"],
+                        match["matchedInterest"],
+                        delivery["channel"],
+                        delivery["status"],
+                        match["message"],
+                        now_iso(),
+                    ),
                 )
                 conn.commit()
                 log_notification(
                     {
                         "userId": user["id"],
                         "email": user["email"],
-                        "dealId": deal["id"],
-                        "matchedInterest": matched,
+                        "dealId": match["deal"]["id"],
+                        "matchedInterest": match["matchedInterest"],
                         "status": delivery["status"],
-                        "message": message,
+                        "message": match["message"],
                         "createdAt": now_iso(),
                     }
                 )
-                existing_notifications.add(dedupe_key)
+                existing_notifications.add(match["dedupeKey"])
                 sent += 1
-            except (smtplib.SMTPException, OSError) as exc:
+        except (smtplib.SMTPException, OSError) as exc:
+            for match in new_matches:
                 try:
                     conn.execute(
                         """
                         INSERT INTO notifications (id, user_id, deal_id, matched_interest, channel, status, message, created_at)
                         VALUES (?, ?, ?, ?, 'email', 'failed', ?, ?)
                         """,
-                        (str(uuid.uuid4()), user["id"], deal["id"], matched, message, now_iso()),
+                        (str(uuid.uuid4()), user["id"], match["deal"]["id"], match["matchedInterest"], match["message"], now_iso()),
                     )
                     conn.commit()
                 except sqlite3.IntegrityError:
@@ -1704,16 +1906,16 @@ def match_and_notify():
                     {
                         "userId": user["id"],
                         "email": user["email"],
-                        "dealId": deal["id"],
-                        "matchedInterest": matched,
+                        "dealId": match["deal"]["id"],
+                        "matchedInterest": match["matchedInterest"],
                         "status": "failed",
                         "error": str(exc),
-                        "message": message,
+                        "message": match["message"],
                         "createdAt": now_iso(),
                     }
                 )
-            except sqlite3.IntegrityError:
-                pass
+        except sqlite3.IntegrityError:
+            pass
     conn.close()
     return sent
 
@@ -1918,17 +2120,28 @@ class AppHandler(BaseHTTPRequestHandler):
     def handle_login(self, body):
         hosted_auth_guard()
         email = normalize_email(body.get("email"))
+        password = body.get("password", "")
+        if not email or not password:
+            return json_response(self, {"error": "Email and password are required"}, HTTPStatus.BAD_REQUEST)
+        if login_locked_out(email):
+            return json_response(
+                self,
+                {"error": f"Too many failed attempts for this account. Try again in a few minutes."},
+                HTTPStatus.TOO_MANY_REQUESTS,
+            )
         conn = get_db()
         cleanup_auth_artifacts(conn)
         row = conn.execute(
             "SELECT * FROM users WHERE email = ?",
             (email,),
         ).fetchone()
-        if not row or not verify_password(row["password"], body.get("password", "")):
+        if not row or not verify_password(row["password"], password):
+            record_login_failure(email)
             conn.close()
             return json_response(self, {"error": "Invalid email or password"}, HTTPStatus.UNAUTHORIZED)
+        clear_login_failures(email)
         if not row["password"].startswith("pbkdf2_sha256$"):
-            conn.execute("UPDATE users SET password = ?, updated_at = ? WHERE id = ?", (hash_password(body["password"]), now_iso(), row["id"]))
+            conn.execute("UPDATE users SET password = ?, updated_at = ? WHERE id = ?", (hash_password(password), now_iso(), row["id"]))
         session_token = create_session(conn, row["id"])
         conn.commit()
         refreshed = conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
@@ -1962,7 +2175,11 @@ class AppHandler(BaseHTTPRequestHandler):
             "message": "Password reset instructions sent." if delivery["status"] == "sent" else "Password reset token created for prototype mode.",
             **system_status(),
         }
-        if delivery["token"]:
+        # Handing the raw token back in the API response is a local-dev-only
+        # convenience (no SMTP means no other way to get it) — never do that
+        # once this is actually deployed somewhere reachable, even if SMTP
+        # still isn't configured there yet. See running_on_hosting_platform().
+        if delivery["token"] and not running_on_hosting_platform():
             payload["resetToken"] = delivery["token"]
         return json_response(self, payload)
 

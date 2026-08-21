@@ -794,6 +794,13 @@ function dealFrontChip(deal) {
   return deal.address ? "Near you" : "Local favorite";
 }
 
+function dealThumbVariant(deal) {
+  const name = dealCardName(deal) || "Deal";
+  let sum = 0;
+  for (let i = 0; i < name.length; i += 1) sum += name.charCodeAt(i);
+  return sum % 5;
+}
+
 function dealVisualMarkup(deal) {
   const imageUrl = deal.imageUrl || "";
   if (imageUrl) {
@@ -803,8 +810,12 @@ function dealVisualMarkup(deal) {
       </div>
     `;
   }
+  const initial = (dealCardName(deal) || "?").trim().charAt(0).toUpperCase() || "?";
+  const variant = dealThumbVariant(deal);
   return `
-    <div class="deal-thumb" aria-hidden="true"></div>
+    <div class="deal-thumb deal-thumb-empty deal-thumb-variant-${variant}" aria-hidden="true">
+      <span class="deal-thumb-monogram">${escapeHtml(initial)}</span>
+    </div>
   `;
 }
 

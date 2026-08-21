@@ -17,8 +17,18 @@ Local Deal Alert is a local-first deal app with two account types:
 
 The core product rule that must never quietly regress: **alerts are high
 signal, not noisy.** All deals stay searchable; only zip+interest matches
-trigger a notification. See `DEVELOPMENT_OPERATING_PLAN.md` and
+trigger a notification, and (as of 2026-08-17) all of a shopper's matches
+from one matching run are digested into a single email rather than one
+email per match. See `DEVELOPMENT_OPERATING_PLAN.md` and
 `SUPABASE_AUTH_AND_SCHEMA_PLAN.md` for the full rules this was built around.
+
+Interest matching is word-boundary, not raw substring (fixed 2026-08-17 —
+substring matching had real false positives, e.g. "ice" matching
+"service"), with an optional AI-assisted category-overlap signal on top
+when `ANTHROPIC_API_KEY` is set (see "AI-assisted matching" in
+`README.md`). Zip matching is still exact-match only — see "Deliberately
+deferred: nearby-zip matching" in `README.md` before building a radius
+feature; it needs a real data-model decision, not a quick heuristic.
 
 ## Repo layout
 
@@ -163,8 +173,14 @@ is the single highest-leverage next step toward Phase 2 (see
     reference and interview prep. Also persisted as an HTML artifact.
 11. `AUTOMATION.md` — the plan and checklist for GitHub + CI + Supabase +
     Railway, so the project stops depending on any single laptop being on
-12. `04-23 write up.txt` — dated session log from an earlier build pass
+12. `API_CONTRACT.md` — every HTTP route `app.py` actually serves, request/
+    response shapes, and known rough edges (e.g. `GET /api/users` exposure)
+13. `NOTIFICATION_PROVIDER_DECISION.md` — real-email provider decision
+    (Resend, over SMTP, no code changes needed)
+14. `LAUNCH_CHECKLIST.md` — soft-launch QA checklist, ties together the
+    other docs into one ordered pass
+15. `04-23 write up.txt` — dated session log from an earlier build pass
 
-All of these were accurate as of this write-up (2026-08-16). If something
-here conflicts with what you find in the code, trust the code and fix the
-doc.
+All of these were accurate as of this write-up (last updated 2026-08-19).
+If something here conflicts with what you find in the code, trust the
+code and fix the doc.
